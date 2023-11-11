@@ -1,11 +1,12 @@
 <!doctype html>
 
-<html>
+<html lang="en">
 
 <head>
 
-  
+
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WebGPU Life</title>
   <link rel="stylesheet" type="text/css" href="index.css" />
 </head>
@@ -28,7 +29,8 @@
     const device = await adapter.requestDevice();
 
     const GRID_SIZE = 4; // any number in the power of 2
-    // const CELL_SIZE = 128;
+  const cellWidth = canvas.width / GRID_SIZE;
+  const cellHeight = canvas.height / GRID_SIZE;
     // Create a uniform buffer that describes the grid:
     const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
     const uniformBuffer = device.createBuffer({
@@ -74,6 +76,41 @@
       }],
     };
 
+   // Create an array representing the active state of each cell.
+   const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+
+// Create a storage buffer to hold the cell state.
+const cellStateStorage = device.createBuffer({
+  label: "Cell State",
+  size: cellStateArray.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+});
+
+// Load multiple images and create a texture for each one.
+const urls = ['pose1.jpg', 'pose2.jpg', 'pose3.jpg'];
+const textures = await Promise.all(urls.map(url => webGPUTextureFromImageUrl(device, url)));
+
+// Create a texture array and store all the textures in it.
+const textureArray = device.createTexture({
+size: { width: textures[0].width, height: textures[0].height, depthOrArrayLayers: textures.length },
+format: 'rgba8unorm',
+usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+});
+
+canvas.addEventListener('click', event => {
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  const cellX = Math.floor(x / cellWidth);
+  const cellY = Math.floor(y / cellHeight);
+
+  const index = cellY * GRID_SIZE + cellX;
+  cellStateArray[index] = 1;
+
+  device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
+});
+
     const cellShaderModule = device.createShaderModule({
       label: "Cell shader",
       code: `
@@ -90,14 +127,18 @@
               @group(0) @binding(0) var<uniform> grid: vec2f;
               @group(0) @binding(1) var sampler1: sampler;
               @group(0) @binding(2) var texture1: texture_2d<f32>;
+              @group(0) @binding(3) var<storage> cellState: array<u32>;
 
 
               @vertex
               fn vertexMain(input: VertexInput) -> VertexOutput  {
                 let i = f32(input.instance);
                 let cell = vec2f(i % grid.x, floor(i / grid.x));
+                let state = f32(cellState[input.instance]);
                 let cellOffset = cell / grid * 2;
-                let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
+                // let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
+                // New: Scale the position by the cell's active state.
+                let gridPos = (input.pos * state + 1) / grid - 1 + cellOffset;
                 
                 var output: VertexOutput;
                 output.pos = vec4f(gridPos, 0, 1);
@@ -110,8 +151,8 @@
               fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
                 var c = input.cell *0.5 + 0.5;
                 c.y = 1.0-c.y;
-                let color = textureSample(texture1, sampler1, c);
-               // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
+                let state = u32(cellState[input.instance]);
+                let color = textureSample(texture1, sampler1, vec3<f32>(c, f32(state)));               // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
                 return vec4f(color.rgb, 1.0);
                 
               };
@@ -119,37 +160,47 @@
     });
 
     const sampler = device.createSampler({});
-const url = 'button.jpg';
-    async function webGPUTextureFromImageUrl(device, url) { 
+    const url = 'button.jpg';
+    async function webGPUTextureFromImageUrl(device, url) {
       const response = await fetch(url);
       const blob = await response.blob();
       const ImageBitmap = await createImageBitmap(blob);
 
       await new Promise(resolve => {
-    ImageBitmap.onload = resolve;
-  });
+        ImageBitmap.onload = resolve;
+      });
 
       return webGPUTextureFromImageBitmapOrCanvas(device, ImageBitmap);
     }
     // Defining this as a separate function because we'll be re-using it a lot.
-  
-function webGPUTextureFromImageBitmapOrCanvas(device, source) {
-  const textureDescriptor = {
-    size: { width: source.width, height: source.height, depthOrArrayLayers: 1 },
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-  };
 
-  const texture = device.createTexture(textureDescriptor);
+    function webGPUTextureFromImageBitmapOrCanvas(device, source) {
+      const textureDescriptor = {
+        size: { width: source.width, height: source.height, depthOrArrayLayers: 1 },
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      };
 
-  device.queue.copyExternalImageToTexture(
- { source: source },
-    { texture: texture },
-   [source.width, source.height, 1]
+      const texture = device.createTexture(textureDescriptor);
+
+      device.queue.copyExternalImageToTexture(
+        { source: source },
+        { texture: texture },
+        [source.width, source.height, 1]
+      );
+
+      return texture;
+    };
+
+ 
+for (let i = 0; i < textures.length; i++) {
+  device.queue.copyTextureToTexture(
+    { texture: textures[i] },
+    { texture: textureArray, origin: { x: 0, y: 0, z: i } },
+    [textures[i].width, textures[i].height, 1]
   );
-
-  return texture;
 };
+
 
     let bindGroupLayout = device.createBindGroupLayout({
       entries: [
@@ -165,8 +216,13 @@ function webGPUTextureFromImageBitmapOrCanvas(device, source) {
         },
         {
           binding: 2,
-          visibility: GPUShaderStage.FRAGMENT,
+          visibility: GPUShaderStage.FRAGMENT ,
           texture: { sampleType: 'float' },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: 'storage' },
         },
       ],
     });
@@ -175,13 +231,15 @@ function webGPUTextureFromImageBitmapOrCanvas(device, source) {
     imgElement.src = 'button.jpg';
     await new Promise(resolve => { imgElement.onload = resolve; });
     const imageTexture = await webGPUTextureFromImageBitmapOrCanvas(device, imgElement);
-
+   
     const bindGroup = device.createBindGroup({
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: uniformBuffer } },
         { binding: 1, resource: sampler },
-        { binding: 2, resource: imageTexture.createView() },
+       // { binding: 2, resource: imageTexture.createView() },
+        { binding: 2, resource: textureArray.createView() },
+        { binding: 3, resource: { buffer: cellStateStorage } },
       ],
     });
 
