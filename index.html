@@ -92,11 +92,16 @@
     const textures = await Promise.all(urls.map(url => webGPUTextureFromImageUrl(device, url)));
     console.log("10");
     // Create a texture array and store all the textures in it.
-    const textureArray = device.createTexture({
-      size: { width: textures[0].width, height: textures[0].height, depthOrArrayLayers: textures.length },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    const textureArray = [];
+    for(let i = 0; i < textures.length; i++){
+      textureArray.push(
+        device.createTexture({
+          size: { width: textures[0].width, height: textures[0].height, depthOrArrayLayers: textures.length },
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        })
+      );
+    }
    
     /* canvas.addEventListener('click', event => {
       const rect = canvas.getBoundingClientRect();
@@ -123,19 +128,20 @@
               struct VertexOutput {
                 @builtin(position) pos: vec4f,
                 @location(0) cell: vec2f,
+                @location(1) @interpolate(flat) instance: u32,
               };
 
               @group(0) @binding(0) var<uniform> grid: vec2f;
               @group(0) @binding(1) var sampler1: sampler;
               @group(0) @binding(2) var texture1: texture_2d<f32>;
-              @group(0) @binding(3) var<storage> cellState: array<u32>;
+              @group(0) @binding(3) var<storage, read> cellState: array<u32>;
 
 
               @vertex
               fn vertexMain(input: VertexInput) -> VertexOutput  {
                 let i = f32(input.instance);
                 let cell = vec2f(i % grid.x, floor(i / grid.x));
-                // let state = f32(cellState[input.instance]);
+                //let state = f32(cellState[input.instance]);
                 let cellOffset = cell / grid * 2;
                  let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
                 // New: Scale the position by the cell's active state.
@@ -145,6 +151,7 @@
                 output.pos = vec4f(gridPos, 0, 1);
                 output.cell = cell;
                 output.cell = input.pos.xy;
+                output.instance = input.instance;
                 return output;
               };
 
@@ -153,8 +160,8 @@
                 var c = input.cell *0.5 + 0.5;
                 c.y = 1.0-c.y;
                 let state = u32(cellState[input.instance]);
-               // let color = textureSample(texture1, sampler1, vec3<f32>(c, f32(state)));               // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
-                console.log(state);
+                let color = textureSample(texture1, sampler1, c);
+                // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
                 return vec4f(color.rgb, 1.0);
                 
               };
@@ -201,16 +208,6 @@
       return texture;
     };
 
-
-    for (let i = 0; i < textures.length; i++) {
-      device.queue.copyTextureToTexture(
-        { texture: textures[i] },
-        { texture: textureArray, origin: { x: 0, y: 0, z: i } },
-        //[textures[i].width, textures[i].height, 1]
-      );
-    };
-
-
     let bindGroupLayout = device.createBindGroupLayout({
       entries: [
         {
@@ -230,8 +227,8 @@
         },
         {
           binding: 3,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: 'storage' },
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' },
         },
       ],
     });
@@ -255,7 +252,6 @@
     const pipelineLayout = device.createPipelineLayout({
       bindGroupLayouts: [bindGroupLayout],
     });
-    console.log(cellPipeline);
     console.log("test");
     const cellPipeline = device.createRenderPipeline({
       label: "Cell pipeline",
