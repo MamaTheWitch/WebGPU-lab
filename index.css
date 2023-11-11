@@ -1,0 +1,21 @@
+body {
+	background-image: url('background.jpg');
+	background-attachment: fixed;
+ 	background-size: cover;
+    }
+
+	canvas {
+		position: fixed; 
+		bottom: 0; 
+		right: 0; 
+		padding: 1rem; 
+		margin: 1rem;
+
+	}
+
+	@media only screen and (max-width: 376px) {
+		canvas {
+			width: 30%;
+			height: 30%;
+		}
+	  }
