@@ -61,8 +61,7 @@
       label: "Cell vertices",
       size: vertices.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      // mappedAtCreation: true, // added by copilot
-    });
+      });
 
     device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
     console.log("4");
@@ -103,7 +102,7 @@
       );
     }
    
-    /* canvas.addEventListener('click', event => {
+     canvas.addEventListener('click', event => {
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
@@ -115,7 +114,9 @@
       cellStateArray[index] = 1;
     
       device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
-    }); */
+      console.log(cellStateArray);
+      console.log(cellStateStorage);
+    }); 
 
     const cellShaderModule = device.createShaderModule({
       label: "Cell shader",
@@ -184,7 +185,7 @@
         
       // });
 
-    console.log("it worls");
+    console.log("it works");
     return webGPUTextureFromImageBitmapOrCanvas(device, ImageBitmap);
 
     }
