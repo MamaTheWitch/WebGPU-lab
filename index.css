@@ -2,6 +2,7 @@
 
 body {
   background-image: url("background.jpg");
+  
   background-attachment: fixed;
   background-size: cover;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,

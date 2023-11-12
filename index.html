@@ -2,9 +2,6 @@
 
 <html lang="en">
 
-
-<html>
-
 <head>
   <meta charset="utf-8" />
   <title>WebGPU Life</title>
@@ -142,6 +139,7 @@
         })
       );
     };
+console.log(textureArray);
 
     canvas.addEventListener('click', event => {
       const rect = canvas.getBoundingClientRect();
@@ -153,10 +151,12 @@
 
       const index = cellY * GRID_SIZE + cellX;
       cellStateArray[index] = 1;
-
+    
       device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
       console.log(cellStateArray);
-      console.log(cellStateStorage);
+      console.log(cellStateArray[0]);
+      console.log(cellStateArray[1]);
+      console.log(cellStateArray[2]);
     });
 
     const cellShaderModule = device.createShaderModule({
@@ -211,7 +211,11 @@
     });
 
     const sampler = device.createSampler({});
-    const url = 'button.jpg';
+    console.log(cellStateArray[0]);
+   
+  let url = 'button.jpg';
+
+   
 
     async function webGPUTextureFromImageUrl(device, url) {
       const response = await fetch(url);
@@ -222,6 +226,7 @@
       return webGPUTextureFromImageBitmapOrCanvas(device, ImageBitmap);
 
     }
+    
     // Defining this as a separate function because we'll be re-using it a lot.
 
     function webGPUTextureFromImageBitmapOrCanvas(device, source) {
