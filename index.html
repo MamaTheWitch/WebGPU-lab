@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 
+<html lang="en">
+
+
 <html>
   <head>
     <meta charset="utf-8" />
@@ -50,7 +53,8 @@
       const device = await adapter.requestDevice();
 
       const GRID_SIZE = 4; // any number in the power of 2
-      // const CELL_SIZE = 128;
+      const cellWidth = canvas.width / GRID_SIZE;
+    const cellHeight = canvas.height / GRID_SIZE;
       // Create a uniform buffer that describes the grid:
       const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
       const uniformBuffer = device.createBuffer({
@@ -67,42 +71,75 @@
 
       const vertices = new Float32Array([
         //   X,    Y,
-        -0.8,
-        -0.8, // Triangle 1 (Blue)
-        0.8,
-        -0.8,
-        0.8,
-        0.8,
+        -0.8, -0.8, // Triangle 1 (Blue)
+        0.8, -0.8,
+        0.8, -0.8,
 
-        -0.8,
-        -0.8, // Triangle 2 (Red)
-        0.8,
-        0.8,
-        -0.8,
-        0.8,
+        -0.8, -0.8, // Triangle 2 (Red)
+        0.8, -0.8,
+        0.8, -0.8,
       ]);
 
-      const vertexBuffer = device.createBuffer({
-        label: "Cell vertices",
-        size: vertices.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        // mappedAtCreation: true, // added by copilot
+    const vertexBuffer = device.createBuffer({
+      label: "Cell vertices",
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
 
-      device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, vertices);
+    device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
+    console.log("4");
+    const vertexBufferLayout = {
+      arrayStride: 8,
+      attributes: [{
+        format: "float32x2",
+        offset: 0,
+        shaderLocation: 0, // Position, see vertex shader. 
+        // This is an arbitrary number between 0 and 15 and must be unique 
+        // for every attribute that you define. 
+      }],
+    };
+    console.log("5");
+    // Create an array representing the active state of each cell.
+    const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 
-      const vertexBufferLayout = {
-        arrayStride: 8,
-        attributes: [
-          {
-            format: "float32x2",
-            offset: 0,
-            shaderLocation: 0, // Position, see vertex shader.
-            // This is an arbitrary number between 0 and 15 and must be unique
-            // for every attribute that you define.
-          },
-        ],
-      };
+    // Create a storage buffer to hold the cell state.
+    const cellStateStorage = device.createBuffer({
+      label: "Cell State",
+      size: cellStateArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    // Load multiple images and create a texture for each one.
+    const urls = ['pose1.jpg', 'pose2.jpg', 'pose3.jpg'];
+    const textures = await Promise.all(urls.map(url => webGPUTextureFromImageUrl(device, url)));
+    console.log("10");
+    // Create a texture array and store all the textures in it.
+    const textureArray = [];
+    for(let i = 0; i < textures.length; i++){
+      textureArray.push(
+        device.createTexture({
+          size: { width: textures[0].width, height: textures[0].height, depthOrArrayLayers: textures.length },
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        })
+      );
+    }
+   
+     canvas.addEventListener('click', event => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+    
+      const cellX = Math.floor(x / cellWidth);
+      const cellY = Math.floor(y / cellHeight);
+    
+      const index = cellY * GRID_SIZE + cellX;
+      cellStateArray[index] = 1;
+    
+      device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
+      console.log(cellStateArray);
+      console.log(cellStateStorage);
+    }); 
 
       const cellShaderModule = device.createShaderModule({
         label: "Cell shader",
@@ -115,24 +152,30 @@
               struct VertexOutput {
                 @builtin(position) pos: vec4f,
                 @location(0) cell: vec2f,
+                @location(1) @interpolate(flat) instance: u32,
               };
 
               @group(0) @binding(0) var<uniform> grid: vec2f;
               @group(0) @binding(1) var sampler1: sampler;
               @group(0) @binding(2) var texture1: texture_2d<f32>;
+              @group(0) @binding(3) var<storage, read> cellState: array<u32>;
 
 
               @vertex
               fn vertexMain(input: VertexInput) -> VertexOutput  {
                 let i = f32(input.instance);
                 let cell = vec2f(i % grid.x, floor(i / grid.x));
+                //let state = f32(cellState[input.instance]);
                 let cellOffset = cell / grid * 2;
-                let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
+                 let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
+                // New: Scale the position by the cell's active state.
+                // let gridPos = (input.pos * state + 1) / grid - 1 + cellOffset;
                 
                 var output: VertexOutput;
                 output.pos = vec4f(gridPos, 0, 1);
                 output.cell = cell;
                 output.cell = input.pos.xy;
+                output.instance = input.instance;
                 return output;
               };
 
@@ -140,74 +183,71 @@
               fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
                 var c = input.cell *0.5 + 0.5;
                 c.y = 1.0-c.y;
+                let state = u32(cellState[input.instance]);
                 let color = textureSample(texture1, sampler1, c);
-               // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
+                // return vec4f(input.cell.x, input.cell.y, 0.0, 1.0);
                 return vec4f(color.rgb, 1.0);
                 
               };
-        `,
-      });
+        `
+    });
+    
+    const sampler = device.createSampler({});
+    const url = 'button.jpg';
 
-      const sampler = device.createSampler({});
-      const url = "button.jpg";
+    async function webGPUTextureFromImageUrl(device, url) {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const ImageBitmap = await createImageBitmap(blob);
 
-      async function webGPUTextureFromImageUrl(device, url) {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        const ImageBitmap = await createImageBitmap(blob);
+    console.log("it works");
+    return webGPUTextureFromImageBitmapOrCanvas(device, ImageBitmap);
 
-        await new Promise((resolve) => {
-          ImageBitmap.onload = resolve;
-        });
+    }
+    // Defining this as a separate function because we'll be re-using it a lot.
 
-        return webGPUTextureFromImageBitmapOrCanvas(device, ImageBitmap);
-      }
-      // Defining this as a separate function because we'll be re-using it a lot.
+    function webGPUTextureFromImageBitmapOrCanvas(device, source) {
+      const textureDescriptor = {
+        size: { width: source.width, height: source.height, depthOrArrayLayers: 1 },
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      };
 
-      function webGPUTextureFromImageBitmapOrCanvas(device, source) {
-        const textureDescriptor = {
-          size: {
-            width: source.width,
-            height: source.height,
-            depthOrArrayLayers: 1,
-          },
-          format: "rgba8unorm",
-          usage:
-            GPUTextureUsage.TEXTURE_BINDING |
-            GPUTextureUsage.COPY_DST |
-            GPUTextureUsage.RENDER_ATTACHMENT,
-        };
+      const texture = device.createTexture(textureDescriptor);
 
-        const texture = device.createTexture(textureDescriptor);
+      device.queue.copyExternalImageToTexture(
+        { source: source },
+        { texture: texture },
+        [source.width, source.height, 1]
+      );
 
-        device.queue.copyExternalImageToTexture(
-          { source: source },
-          { texture: texture },
-          [source.width, source.height, 1]
-        );
+      return texture;
+    };
 
-        return texture;
-      }
-
-      let bindGroupLayout = device.createBindGroupLayout({
-        entries: [
-          {
-            binding: 0,
-            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-            buffer: { type: "uniform" },
-          },
-          {
-            binding: 1,
-            visibility: GPUShaderStage.FRAGMENT,
-            sampler: { type: "filtering" },
-          },
-          {
-            binding: 2,
-            visibility: GPUShaderStage.FRAGMENT,
-            texture: { sampleType: "float" },
-          },
-        ],
-      });
+    let bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          buffer: { type: 'uniform' },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: 'filtering' },
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float' },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' },
+        },
+      ],
+    });
 
       const imgElement = document.createElement("img");
       imgElement.src = "button.jpg";
@@ -219,37 +259,39 @@
         imgElement
       );
 
-      const bindGroup = device.createBindGroup({
-        layout: bindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: uniformBuffer } },
-          { binding: 1, resource: sampler },
-          { binding: 2, resource: imageTexture.createView() },
-        ],
-      });
+    const bindGroup = device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: uniformBuffer } },
+        { binding: 1, resource: sampler },
+        { binding: 2, resource: imageTexture.createView() },
+        // { binding: 2, resource: textureArray.createView() },
+        { binding: 3, resource: { buffer: cellStateStorage } },
+      ],
+    });
 
-      const pipelineLayout = device.createPipelineLayout({
-        bindGroupLayouts: [bindGroupLayout],
-      });
-
-      const cellPipeline = device.createRenderPipeline({
-        label: "Cell pipeline",
-        layout: pipelineLayout,
-        vertex: {
-          module: cellShaderModule,
-          entryPoint: "vertexMain",
-          buffers: [vertexBufferLayout],
-        },
-        fragment: {
-          module: cellShaderModule,
-          entryPoint: "fragmentMain",
-          targets: [
-            {
-              format: canvasFormat,
-            },
-          ],
-        },
-      });
+    const pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [bindGroupLayout],
+    });
+    console.log("test");
+    const cellPipeline = device.createRenderPipeline({
+      label: "Cell pipeline",
+      layout: pipelineLayout,
+      vertex: {
+        module: cellShaderModule,
+        entryPoint: "vertexMain",
+        buffers: [vertexBufferLayout]
+      },
+      fragment: {
+        module: cellShaderModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: canvasFormat
+        }]
+      }
+    });
+    console.log(cellPipeline);
+    console.log("test");
 
       const encoder = device.createCommandEncoder();
 
